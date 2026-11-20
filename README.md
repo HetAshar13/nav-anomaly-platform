@@ -1,86 +1,42 @@
-# CSSF-Compliant NAV Anomaly Intelligence Platform
+# Fund NAV Anomaly Detection
 
-An end-to-end AI pipeline that detects pricing anomalies in Luxembourg 
-investment fund NAV data, cross-references them against CSSF Circular 
-24/856 regulatory materiality thresholds, and uses a generative AI model 
-to produce structured audit rationales — visualized in a Power BI dashboard.
+Which daily fund prices need a second look? This project simulates daily net asset values (NAVs) for ten funds, records unusual movements and statistical alerts in PostgreSQL, and ranks observations for analyst review.
 
-## Regulatory Framework
+| Stage | Observations |
+| --- | ---: |
+| Simulated daily fund prices across 10 funds | 7,830 |
+| Eligible after the rolling-history requirement | 7,640 |
+| Flagged by at least one method | 2,029 |
+| Crossed a configured daily-return threshold | 1,840 |
+| Threshold alerts meeting the priority rule | 95 |
 
-CSSF Circular 24/856 — Luxembourg NAV error materiality thresholds:
+The detector measures daily price changes. A large change can reflect a genuine market move or a bad input. CSSF Circular 24/856 §4.2 addresses the size of a NAV calculation error relative to NAV. These simulated alerts support triage and analyst review. [CSSF Circular 24/856](https://www.cssf.lu/wp-content/uploads/CSSF24_856eng.pdf)
 
-| Fund Type     | Threshold |
-|---------------|-----------|
-| Money Market  | 0.20%     |
-| Bond / Mixed  | 0.50%     |
-| Equity        | 1.00%     |
+## One alert
 
-## Architecture
-```
-Synthetic NAV Data (Python + numpy)
-         ↓
-Causal Anomaly Injection (fat_finger, stale_price, fx_shock,
-                          liquidity_event, corporate_action)
-         ↓
-Feature Engineering (volatility, tracking_error, drawdown)
-         ↓
-Dual-Layer Detection:
-  Layer 1: Isolation Forest + LOF + Z-score (statistical)
-  Layer 2: CSSF 24/856 Rule Engine (regulatory)
-         ↓
-PostgreSQL Database
-         ↓
-Groq LLM → Structured Audit Rationales
-         ↓
-Power BI Dashboard (4 pages)
-```
+On 19 August 2024 the simulated LUX Mixed Conservative Fund rose by 2.58%, above its 0.50% daily-return threshold. It received a priority score of 81.36. An analyst can compare that move with the benchmark and check the pricing inputs.
 
-## Key Results
+## How the pipeline works
 
-- 7,640 daily NAV prices processed across 10 Luxembourg funds (2023-2025)
-- 2,029 anomalies detected across 3 asset classes
-- 1,840 CSSF regulatory threshold breaches identified
-- 95 highest-priority entries escalated for AI-generated audit rationales
-- Average risk score of escalated entries: 75.16/100
+1. Generate fund prices and inject scenarios such as stale prices and large price shifts.
+2. Calculate rolling volatility, tracking error and drawdown.
+3. Combine statistical signals from z-scores, Isolation Forest and Local Outlier Factor with a configured return threshold.
+4. Write alert details and scores to PostgreSQL. The priority rule selects threshold alerts with a score of at least 60.
+5. Optionally generate review notes for priority cases. Power BI can visualize the results.
 
-## Tech Stack
+## Run detection locally
 
-- Python 3.14, pandas, numpy, scikit-learn
-- PostgreSQL 18, SQLAlchemy
-- Groq API (meta-llama/llama-4-scout-17b-16e-instruct)
-- Power BI Desktop
-- pytest (6/6 tests passing)
+Use Python 3.12 and an empty UTF-8 PostgreSQL database dedicated to this demo. From the repository root, create and activate a virtual environment, install the pinned packages, then copy `.env.example` to `.env` and fill in the local database settings. Keep your local credentials in `.env`.
 
-## How to Run
 ```bash
-git clone https://github.com/yourusername/nav-anomaly-platform
-cd nav-anomaly-platform
 python -m venv nav_env
-nav_env\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env  # add your credentials
-python -m pipeline.run_pipeline
+# macOS/Linux: source nav_env/bin/activate
+# PowerShell: .\nav_env\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pipeline.run_pipeline --detect-only
+python -m pytest -q -k "not rationales"
 ```
 
-## Project Context
+Supply `GROQ_API_KEY` and omit `--detect-only` to request optional rationale generation. Treat generated explanations as suggestions for review.
 
-Built as a portfolio project targeting Deloitte Luxembourg's 
-AI & Data Trainee internship. Demonstrates data engineering, 
-ML anomaly detection, GenAI integration, Luxembourg regulatory 
-domain knowledge, and executive-ready visualization.
-```
-
-Save with **Ctrl+S**.
-
----
-
-## Step 3 — Create .env.example
-
-Root folder → New File → `.env.example` → paste:
-```
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=nav_platform
-DB_USER=postgres
-DB_PASSWORD=your_password_here
-GROQ_API_KEY=your_groq_api_key_here
+The [older Power BI workbook](dashboard/nav_dashboard.pbix) and [slide deck](NAV-Anomaly-Intelligence-Platform.pdf) use “breach” for simulated daily-return alerts. Use the definitions and counts above when reading those assets.
