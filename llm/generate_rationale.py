@@ -10,20 +10,9 @@ from utils.logger import get_logger
 
 load_dotenv()
 log = get_logger("generate_rationale")
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-# meta-llama/llama-4-scout-17b-16e-instruct chosen because:
-# - 500K tokens/day (5x more than llama-3.3-70b-versatile)
-# - 30K tokens/minute (fastest available on free tier)
-# - 1K requests/day (sufficient for our 95 rows)
-# - Newer Llama 4 architecture, better instruction following than 8b
 MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
-# Filter: CSSF breaches with risk_score >= 60
-# - 95 rows confirmed from database query
-# - ~46K tokens total, well within 500K daily limit
-# - Score >= 60 captures all meaningful compliance events
-# - These are the only entries requiring compliance officer action
+# Select the priority queue of simulated daily-return alerts.
 FILTER_QUERY = """
     SELECT a.anomaly_id, a.fund_id, a.nav_id, a.price_date,
            a.nav_value, a.daily_return, a.z_score,
@@ -39,18 +28,12 @@ FILTER_QUERY = """
     ORDER BY a.risk_score DESC
 """
 
-SYSTEM_PROMPT = """You are a senior compliance analyst at Deloitte Luxembourg.
-You write audit risk rationales for NAV anomalies under CSSF Circular 24/856.
-
-Respond with valid JSON only. No text outside the JSON. Use exactly this structure:
-{
-  "observation": "One sentence with the exact NAV return percentage and date.",
-  "likely_cause": "One sentence naming the cause: fat-finger error, stale pricing, FX rate misapplication, forced liquidity event, or corporate action error.",
-  "recommended_action": "One sentence with the required action citing the CSSF materiality threshold percentage.",
-  "confidence": "High"
-}
-
-Keep each sentence under 35 words. No markdown. No preamble."""
+SYSTEM_PROMPT = """Draft analyst review notes for a simulated daily fund return alert.
+Return a JSON object with these three string fields:
+- observation: State the return and date using the supplied data.
+- likely_cause: Describe a plausible explanation only if the data supports it. Otherwise say the cause is unclear.
+- recommended_action: Suggest one check an analyst can perform.
+Use one sentence per field. A threshold alert is a prompt for review."""
 
 
 def build_prompt(row, ctx):
@@ -62,8 +45,8 @@ def build_prompt(row, ctx):
         f"Z-Score: {row['z_score']:.2f}\n"
         f"Risk Score: {row['risk_score']:.1f}/100\n"
         f"Market Regime: {row['market_regime']}\n"
-        f"CSSF Threshold: {row['cssf_threshold']*100:.2f}%\n"
-        f"Breach by: {row['breach_magnitude']*100:.4f}%\n"
+        f"Daily-return threshold: {row['cssf_threshold']*100:.2f}%\n"
+        f"Points over threshold: {row['breach_magnitude']*100:.4f}%\n"
         f"7d Avg Return: {ctx['avg_ret']*100:.4f}%\n"
         f"7d Benchmark: {ctx['avg_bench']*100:.4f}%\n\n"
         f"JSON only:"
@@ -103,16 +86,16 @@ def generate_all_rationales():
 
     safe_log(f"Generating rationales for {total} anomalies.")
     safe_log(f"Model: {MODEL}")
-    safe_log(f"Estimated tokens: ~{total * 300} | Daily limit: 500K")
     safe_log(f"Estimated time: ~{round(total * 2.5 / 60, 1)} minutes")
 
     if total == 0:
         safe_log("No rows to process. All entries already have rationales.")
         return
 
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     success, failed = 0, 0
 
-    for i, row in df.iterrows():
+    for _, row in df.iterrows():
         try:
             ctx    = get_7d_context(engine, row["fund_id"], row["price_date"])
             prompt = build_prompt(row, ctx)
@@ -130,51 +113,43 @@ def generate_all_rationales():
             raw  = resp.choices[0].message.content.strip()
             raw  = raw.replace("```json", "").replace("```", "").strip()
             data = json.loads(raw)
+            fields = ("observation", "likely_cause", "recommended_action")
+            if not isinstance(data, dict) or any(
+                not isinstance(data.get(field), str) or not data[field].strip()
+                for field in fields
+            ):
+                raise ValueError("Expected three nonempty rationale fields")
 
             rationale = (
-                f"OBSERVATION: {data.get('observation', '')} "
-                f"CAUSE: {data.get('likely_cause', '')} "
-                f"ACTION: {data.get('recommended_action', '')}"
+                f"OBSERVATION: {data['observation'].strip()} "
+                f"CAUSE: {data['likely_cause'].strip()} "
+                f"ACTION: {data['recommended_action'].strip()}"
             )
-            confidence = data.get("confidence", "High")
 
             with engine.connect() as conn:
                 conn.execute(text("""
                     UPDATE fact_anomalies
-                    SET llm_rationale = :r, llm_confidence = :c
+                    SET llm_rationale = :r, llm_confidence = NULL
                     WHERE anomaly_id = :id
                 """), {
                     "r":  rationale,
-                    "c":  confidence,
                     "id": int(row["anomaly_id"])
                 })
                 conn.commit()
 
             success += 1
             safe_log(
-                f"[{success}/{total}] CSSF | "
+                f"[{success}/{total}] Alert | "
                 f"{row['fund_name']} | "
                 f"{str(row['price_date'])} | "
-                f"Score:{row['risk_score']:.0f} | "
-                f"{confidence}"
+                f"Score:{row['risk_score']:.0f}"
             )
 
             time.sleep(2.5)
 
-        except json.JSONDecodeError:
+        except ValueError:
             failed += 1
-            safe_log(f"JSON parse failed for anomaly {row['anomaly_id']} -- storing raw")
-            try:
-                clean_raw = raw[:1000].encode("ascii", errors="replace").decode("ascii")
-                with engine.connect() as conn:
-                    conn.execute(text("""
-                        UPDATE fact_anomalies
-                        SET llm_rationale = :r, llm_confidence = 'Low'
-                        WHERE anomaly_id = :id
-                    """), {"r": clean_raw, "id": int(row["anomaly_id"])})
-                    conn.commit()
-            except Exception as e2:
-                safe_log(f"Could not store raw for {row['anomaly_id']}: {str(e2)[:100]}")
+            safe_log(f"Invalid rationale for anomaly {row['anomaly_id']}; left pending")
 
         except Exception as e:
             failed += 1
