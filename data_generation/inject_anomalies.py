@@ -7,7 +7,7 @@ from utils.logger import get_logger
 log = get_logger("inject_anomalies")
 
 ANOMALY_PLAN = [
-    (1,  "fat_finger",       0.10,  "NAV x10 decimal place error"),
+    (1,  "fat_finger",       0.10,  "Simulated 10% NAV increase"),
     (2,  "fat_finger",      -0.90,  "NAV /10 decimal place error"),
     (3,  "stale_price",      0,     "5-day static NAV"),
     (4,  "stale_price",      0,     "7-day static NAV"),

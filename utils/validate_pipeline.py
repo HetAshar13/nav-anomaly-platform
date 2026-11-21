@@ -4,7 +4,7 @@ from utils.logger import get_logger
 
 log = get_logger("validate_pipeline")
 
-def validate():
+def validate(*, include_rationales=True):
     engine = get_engine()
     checks = []
 
@@ -30,11 +30,12 @@ def validate():
         checks.append(("Anomalies detected",
             count("SELECT COUNT(*) FROM fact_anomalies") > 0))
 
-        checks.append(("CSSF breaches exist",
+        checks.append(("Daily-return threshold alerts exist",
             count("SELECT COUNT(*) FROM fact_anomalies WHERE is_cssf_breach = TRUE") > 0))
 
-        checks.append(("LLM rationales generated",
-            count("SELECT COUNT(*) FROM fact_anomalies WHERE llm_rationale IS NOT NULL") > 0))
+        if include_rationales:
+            checks.append(("LLM rationales generated",
+                count("SELECT COUNT(*) FROM fact_anomalies WHERE llm_rationale IS NOT NULL") > 0))
 
     print("\n" + "="*55)
     print("PIPELINE VALIDATION REPORT")
