@@ -59,7 +59,7 @@ def run_anomaly_detection():
 
         # LAYER 1C: Local Outlier Factor
         # Compares each point's density to its neighbours — anomalies are in sparse regions
-        # Using two models gives us cross-validation — if both agree, confidence is higher
+        # LOF provides a separate signal based on the density around each observation.
         lof = LocalOutlierFactor(n_neighbors=LOF_N_NEIGHBORS, contamination=LOF_CONTAMINATION)
         lof_preds = lof.fit_predict(Xs)
         raw_lof   = -lof.negative_outlier_factor_
@@ -67,8 +67,7 @@ def run_anomaly_detection():
         g["lof_score"] = (raw_lof - min_lof) / (max_lof - min_lof + 1e-9)
         g["lof_flag"]  = lof_preds == -1
 
-        # LAYER 2: CSSF Regulatory Breach Check
-        # This is the differentiator — checks against actual Luxembourg law
+        # Daily-return screening. These legacy field names are used by the dashboard.
         g["abs_return"]       = g["daily_return"].abs()
         g["is_cssf_breach"]   = g["abs_return"] > cssf_thr
         g["breach_magnitude"] = (g["abs_return"] - cssf_thr).clip(lower=0)
