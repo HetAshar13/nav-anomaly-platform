@@ -30,9 +30,9 @@ The detector measures daily price changes. A large change can reflect a genuine 
 ```mermaid
 flowchart TD
     A["Simulated fund prices in PostgreSQL"] --> B["Returns and rolling features"]
-    B --> C["Statistical signals per fund"]
-    B --> D["Configured daily-return threshold"]
-    C --> E["Flagged observations and ranking"]
+    B --> C["Statistical signals: z-score, Isolation Forest and LOF"]
+    B --> D["Configured thresholds on absolute daily return"]
+    C --> E["Flag if either check triggers and rank flagged observations"]
     D --> E
     E --> F["Priority queue: threshold alert and score of at least 60"]
     F --> G["Optional model-generated review notes"]
@@ -40,6 +40,10 @@ flowchart TD
 
 - PostgreSQL stores the fund reference data in `dim_fund` and one observation per fund and date in `fact_nav_pricing`. The simulation includes stale prices and large price shifts.
 - The detector scores the available history of each fund. It combines a return z-score with Isolation Forest and Local Outlier Factor, which use daily return, rolling volatility, tracking error and drawdown. The 0–100 score ranks cases for review.
+- The simulated funds use absolute daily-return thresholds of 0.20% for money
+  market funds, 0.50% for bond and mixed funds, and 1.00% for equity funds.
+  The thresholds determine which price moves to review.
+  [Fund configuration](data_generation/generate_funds.py)
 - `fact_anomalies` keeps each alert and its scores. The optional Groq step adds suggested checks for priority cases. A missing or invalid response leaves the note pending.
 
 [Database schema](database/schema.sql) · [Feature calculations](feature_engineering/compute_features.py) · [Detector](ml_models/anomaly_detection.py) · [Review notes](llm/generate_rationale.py)
