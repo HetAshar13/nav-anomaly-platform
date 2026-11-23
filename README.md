@@ -2,6 +2,19 @@
 
 Which daily fund prices need a second look? This project simulates daily net asset values (NAVs) for ten funds, records unusual movements and statistical alerts in PostgreSQL, and ranks observations for analyst review.
 
+## One alert
+
+Think of this as the first row an analyst opens. The simulated LUX Mixed Conservative Fund rose 2.58% on 19 August 2024. The next step is to compare the move with the benchmark and check the pricing inputs.
+
+| Observation | Value |
+| --- | ---: |
+| Daily return | +2.58% |
+| Configured daily-return threshold | 0.50% |
+| Priority score | 81.36 / 100 |
+| Priority queue | Yes |
+
+## One run
+
 | Stage | Observations |
 | --- | ---: |
 | Simulated daily fund prices across 10 funds | 7,830 |
@@ -12,17 +25,24 @@ Which daily fund prices need a second look? This project simulates daily net ass
 
 The detector measures daily price changes. A large change can reflect a genuine market move or a bad input. CSSF Circular 24/856 §4.2 addresses the size of a NAV calculation error relative to NAV. These simulated alerts support triage and analyst review. [CSSF Circular 24/856](https://www.cssf.lu/wp-content/uploads/CSSF24_856eng.pdf)
 
-## One alert
-
-On 19 August 2024 the simulated LUX Mixed Conservative Fund rose by 2.58%, above its 0.50% daily-return threshold. It received a priority score of 81.36. An analyst can compare that move with the benchmark and check the pricing inputs.
-
 ## How the pipeline works
 
-1. Generate fund prices and inject scenarios such as stale prices and large price shifts.
-2. Calculate rolling volatility, tracking error and drawdown.
-3. Combine statistical signals from z-scores, Isolation Forest and Local Outlier Factor with a configured return threshold.
-4. Write alert details and scores to PostgreSQL. The priority rule selects threshold alerts with a score of at least 60.
-5. Optionally generate review notes for priority cases. Power BI can visualize the results.
+```mermaid
+flowchart TD
+    A["Simulated fund prices in PostgreSQL"] --> B["Returns and rolling features"]
+    B --> C["Statistical signals per fund"]
+    B --> D["Configured daily-return threshold"]
+    C --> E["Flagged observations and ranking"]
+    D --> E
+    E --> F["Priority queue: threshold alert and score of at least 60"]
+    F --> G["Optional model-generated review notes"]
+```
+
+- PostgreSQL stores the fund reference data in `dim_fund` and one observation per fund and date in `fact_nav_pricing`. The simulation includes stale prices and large price shifts.
+- The detector scores the available history of each fund. It combines a return z-score with Isolation Forest and Local Outlier Factor, which use daily return, rolling volatility, tracking error and drawdown. The 0–100 score ranks cases for review.
+- `fact_anomalies` keeps each alert and its scores. The optional Groq step adds suggested checks for priority cases. A missing or invalid response leaves the note pending.
+
+[Database schema](database/schema.sql) · [Feature calculations](feature_engineering/compute_features.py) · [Detector](ml_models/anomaly_detection.py) · [Review notes](llm/generate_rationale.py)
 
 ## Run detection locally
 
@@ -39,4 +59,4 @@ python -m pytest -q -k "not rationales"
 
 Supply `GROQ_API_KEY` and omit `--detect-only` to request optional rationale generation. Treat generated explanations as suggestions for review.
 
-The [older Power BI workbook](dashboard/nav_dashboard.pbix) and [slide deck](NAV-Anomaly-Intelligence-Platform.pdf) use “breach” for simulated daily-return alerts. Use the definitions and counts above when reading those assets.
+The [original Power BI workbook](dashboard/nav_dashboard.pbix) and [presentation](NAV-Anomaly-Intelligence-Platform.pdf) use “breach” for simulated daily-return alerts. The case and counts above use the current definitions. In the PostgreSQL schema, legacy fields such as `is_cssf_breach` and `cssf_threshold` still carry the daily-return flag and threshold.
